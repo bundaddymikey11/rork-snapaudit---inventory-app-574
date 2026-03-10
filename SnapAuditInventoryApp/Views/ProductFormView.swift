@@ -40,7 +40,14 @@ struct ProductFormView: View {
 
                 Section("Details") {
                     TextField("Brand", text: $brand)
-                    TextField("Category", text: $category)
+                    Picker("Category", selection: $category) {
+                        Text("Select Category").tag("")
+                        ForEach(InventoryCategory.auditCategories) { cat in
+                            Text(cat.displayName).tag(cat.rawValue)
+                        }
+                        Divider()
+                        Text("Other").tag("Other")
+                    }
                     TextField("Variant", text: $variant)
                     TextField("Barcode (optional)", text: $barcode)
                         .keyboardType(.asciiCapable)

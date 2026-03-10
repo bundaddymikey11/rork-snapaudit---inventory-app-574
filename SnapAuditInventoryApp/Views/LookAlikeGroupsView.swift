@@ -176,6 +176,7 @@ struct LookAlikeGroupDetailView: View {
                 membersSection
                 zoneProfileSection
                 policySection
+                contrastiveTrainingSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle(group.name)
@@ -365,6 +366,72 @@ struct LookAlikeGroupDetailView: View {
                 title: "Second Angle Recommended",
                 detail: "Flag shown in capture UI when uncertainty is high"
             )
+            PolicyRow(
+                icon: "arrow.triangle.branch",
+                color: .orange,
+                title: "Contrastive Variant Training",
+                detail: "Additional comparison pass for near-identical variants"
+            )
+        }
+    }
+
+    private var contrastiveTrainingSection: some View {
+        Section {
+            let memberSkuIds = group.members.map(\.skuId)
+            let keywordCount = allProducts
+                .filter { memberSkuIds.contains($0.id) && !$0.ocrKeywords.isEmpty }
+                .count
+
+            HStack(spacing: 12) {
+                Image(systemName: "text.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keyword Coverage")
+                        .font(.subheadline.weight(.medium))
+                    Text("\(keywordCount) of \(group.members.count) members have differentiator keywords")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(keywordCount)/\(group.members.count)")
+                    .font(.caption.weight(.medium).monospacedDigit())
+                    .foregroundStyle(keywordCount == group.members.count ? .green : .orange)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        (keywordCount == group.members.count ? Color.green : Color.orange).opacity(0.12),
+                        in: Capsule()
+                    )
+            }
+            .padding(.vertical, 2)
+
+            Button {
+                let skuIds = group.members.map(\.skuId)
+                ContrastiveTrainingService.shared.generateReferencePairs(
+                    groupId: group.id,
+                    memberSkuIds: skuIds,
+                    modelContext: modelContext
+                )
+            } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Generate Reference Pairs")
+                        Text("Create pairwise comparisons for all \(group.members.count) members")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundStyle(.orange)
+                }
+            }
+        } header: {
+            Text("Contrastive Training")
+        } footer: {
+            Text("Contrastive training uses differentiator keywords and zone profiles to distinguish near-identical variants during recognition.")
+                .font(.caption2)
         }
     }
 

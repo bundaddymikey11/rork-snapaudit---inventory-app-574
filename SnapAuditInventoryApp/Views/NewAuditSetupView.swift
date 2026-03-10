@@ -12,14 +12,34 @@ struct NewAuditSetupView: View {
     @Query(sort: \Location.name) private var locations: [Location]
     @Query private var allSKUs: [ProductSKU]
     @Query private var allLayouts: [ShelfLayout]
+    @Query(filter: #Predicate<AuditPreset> { !$0.isBuiltIn }, sort: \AuditPreset.createdAt)
+    private var customPresets: [AuditPreset]
+
+    // Preset state
+    @State private var selectedBuiltInPresetId: String? = nil
+    @State private var selectedCustomPreset: AuditPreset? = nil
+    @State private var showSavePresetSheet = false
+    @State private var newPresetName: String = ""
+    @State private var newPresetDescription: String = ""
+    @State private var newPresetIcon: String = "star.fill"
+    @AppStorage("lastUsedPresetId") private var lastUsedPresetId: String = ""
 
     @State private var selectedLocation: Location?
     @State private var selectedMode: CaptureMode = .photo
     @AppStorage("reviewWorkflowDefault") private var reviewLaterDefault: Bool = true
     @AppStorage("defaultCaptureQualityMode") private var defaultCaptureQualityModeRaw: String = CaptureQualityMode.standard.rawValue
+    @AppStorage("defaultRecognitionScope") private var defaultRecognitionScopeRaw: String = RecognitionScope.all.rawValue
+    @AppStorage("defaultStrictBrandFilter") private var defaultStrictBrandFilter: Bool = true
+    @AppStorage("defaultAllowPossibleStragglers") private var defaultAllowPossibleStragglers: Bool = false
     @State private var reviewLater: Bool = true
     @State private var selectedLayout: ShelfLayout? = nil
     @State private var captureQualityMode: CaptureQualityMode = .standard
+    @State private var recognitionScope: RecognitionScope = .all
+    @State private var mainBrand: String = ""
+    @State private var secondaryBrand: String = ""
+    @State private var enableSecondaryBrand: Bool = false
+    @State private var strictBrandFilter: Bool = true
+    @State private var allowPossibleStragglers: Bool = false
 
     @State private var showExpectedImporter = false
     @State private var showOnHandImporter = false
@@ -45,12 +65,15 @@ struct NewAuditSetupView: View {
 
     var body: some View {
         List {
+            presetWorkflowSection
             locationSection
             captureModeSection
             captureQualitySection
+            recognitionScopeSection
             reviewWorkflowSection
             layoutSection
             importSection
+            savePresetSection
         }
         .listStyle(.insetGrouped)
         .navigationTitle("New Audit")
@@ -72,6 +95,14 @@ struct NewAuditSetupView: View {
         .onAppear {
             reviewLater = reviewLaterDefault
             captureQualityMode = CaptureQualityMode(rawValue: defaultCaptureQualityModeRaw) ?? .standard
+            recognitionScope = RecognitionScope(rawValue: defaultRecognitionScopeRaw) ?? .all
+            strictBrandFilter = defaultStrictBrandFilter
+            allowPossibleStragglers = defaultAllowPossibleStragglers
+            // Re-apply last used preset if any
+            if !lastUsedPresetId.isEmpty,
+               let preset = BuiltInPreset.all.first(where: { $0.id == lastUsedPresetId }) {
+                applyBuiltIn(preset)
+            }
         }
         .fileImporter(
             isPresented: $showExpectedImporter,
@@ -126,6 +157,275 @@ struct NewAuditSetupView: View {
         } message: {
             Text(csvError ?? "Could not read the file.")
         }
+        .sheet(isPresented: $showSavePresetSheet) {
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField("Preset Name", text: $newPresetName)
+                        TextField("Description (optional)", text: $newPresetDescription)
+                    } header: {
+                        Text("Details")
+                    }
+
+                    Section {
+                        let iconOptions: [(String, String)] = [
+                            ("star.fill", "Star"),
+                            ("bookmark.fill", "Bookmark"),
+                            ("checkmark.seal.fill", "Verified"),
+                            ("bolt.fill", "Quick"),
+                            ("magnifyingglass", "Scan"),
+                            ("cube.box.fill", "Box"),
+                            ("tray.fill", "Tray"),
+                            ("building.2.fill", "Brand"),
+                            ("tag.fill", "Category")
+                        ]
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(iconOptions, id: \.0) { icon, label in
+                                    Button {
+                                        newPresetIcon = icon
+                                    } label: {
+                                        VStack(spacing: 4) {
+                                            Image(systemName: icon)
+                                                .font(.title3)
+                                                .foregroundStyle(newPresetIcon == icon ? .white : .blue)
+                                                .frame(width: 44, height: 44)
+                                                .background(newPresetIcon == icon ? Color.blue : Color.blue.opacity(0.12), in: .rect(cornerRadius: 10))
+                                            Text(label)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    } header: {
+                        Text("Icon")
+                    }
+                }
+                .navigationTitle("Save Preset")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showSavePresetSheet = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            guard !newPresetName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                            let preset = AuditPreset(
+                                name: newPresetName,
+                                description: newPresetDescription.isEmpty ? "Custom preset" : newPresetDescription,
+                                icon: newPresetIcon,
+                                recognitionScope: recognitionScope,
+                                mainBrand: mainBrand,
+                                secondaryBrand: enableSecondaryBrand ? secondaryBrand : "",
+                                strictBrandFilter: strictBrandFilter,
+                                allowPossibleStragglers: allowPossibleStragglers,
+                                captureQualityMode: captureQualityMode,
+                                enableAuditTrayMode: UserDefaults.standard.bool(forKey: "auditTrayModeEnabled"),
+                                enableMultiScaleDetection: UserDefaults.standard.bool(forKey: "multiScaleDetectionEnabled"),
+                                enableContrastiveVariantTraining: UserDefaults.standard.bool(forKey: "contrastiveVariantTrainingEnabled"),
+                                enableOCRVariantAssist: UserDefaults.standard.bool(forKey: "ocrAssistedVariantComparison"),
+                                reviewWorkflow: selectedWorkflow,
+                                isBuiltIn: false
+                            )
+                            modelContext.insert(preset)
+                            try? modelContext.save()
+                            selectedCustomPreset = preset
+                            selectedBuiltInPresetId = nil
+                            showSavePresetSheet = false
+                        }
+                        .fontWeight(.semibold)
+                        .disabled(newPresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+    }
+
+    // MARK: - Sections
+
+    // MARK: Preset Workflow Section
+
+    private var presetWorkflowSection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    // Smart suggestion banner
+                    if let suggestion = smartSuggestedPreset {
+                        presetCard(
+                            id: suggestion.id,
+                            name: suggestion.name,
+                            description: "Suggested",
+                            icon: suggestion.icon,
+                            accent: suggestion.accentColor,
+                            isSelected: selectedBuiltInPresetId == suggestion.id
+                        ) {
+                            applyBuiltIn(suggestion)
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            Text("Suggested")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(.orange, in: Capsule())
+                                .offset(x: 4, y: -6)
+                        }
+                    }
+
+                    ForEach(BuiltInPreset.all, id: \.id) { preset in
+                        presetCard(
+                            id: preset.id,
+                            name: preset.name,
+                            description: preset.description,
+                            icon: preset.icon,
+                            accent: preset.accentColor,
+                            isSelected: selectedBuiltInPresetId == preset.id
+                        ) {
+                            applyBuiltIn(preset)
+                        }
+                    }
+
+                    ForEach(customPresets) { preset in
+                        presetCard(
+                            id: preset.id.uuidString,
+                            name: preset.name,
+                            description: preset.presetDescription,
+                            icon: preset.icon,
+                            accent: .teal,
+                            isSelected: selectedCustomPreset?.id == preset.id
+                        ) {
+                            applyCustomPreset(preset)
+                        }
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 4)
+            }
+            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+        } header: {
+            Text("Audit Workflow")
+        } footer: {
+            if let id = selectedBuiltInPresetId,
+               let preset = BuiltInPreset.all.first(where: { $0.id == id }) {
+                Label(preset.description, systemImage: preset.icon)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if let preset = selectedCustomPreset {
+                Label(preset.presetDescription, systemImage: preset.icon)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Select a preset to auto-configure settings, or configure manually below.")
+                    .font(.caption2)
+            }
+        }
+    }
+
+    private func presetCard(id: String, name: String, description: String, icon: String, accent: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(isSelected ? .white : accent)
+                    .frame(width: 36, height: 36)
+                    .background(isSelected ? accent : accent.opacity(0.12), in: .rect(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelected ? accent : .primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(12)
+            .frame(width: 112)
+            .background(
+                isSelected
+                    ? accent.opacity(0.1)
+                    : Color(.secondarySystemGroupedBackground),
+                in: .rect(cornerRadius: 12)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(isSelected ? accent : Color(.systemGray5), lineWidth: isSelected ? 2 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: isSelected)
+    }
+
+    private var savePresetSection: some View {
+        Section {
+            Button {
+                newPresetName = ""
+                newPresetDescription = ""
+                newPresetIcon = "star.fill"
+                showSavePresetSheet = true
+            } label: {
+                Label("Save Current Setup as Preset", systemImage: "square.and.arrow.down")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.blue)
+            }
+        } footer: {
+            Text("Saves capture mode, recognition scope, brand/category filters, and review behavior.")
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - Apply Preset Logic
+
+    private func applyBuiltIn(_ preset: BuiltInPreset) {
+        withAnimation(.spring(response: 0.3)) {
+            selectedBuiltInPresetId = preset.id
+            selectedCustomPreset = nil
+        }
+        captureQualityMode = preset.captureQualityMode
+        recognitionScope = preset.recognitionScope
+        strictBrandFilter = preset.strictBrandFilter
+        allowPossibleStragglers = preset.allowPossibleStragglers
+        reviewLater = preset.reviewWorkflow == .reviewLater
+        // Feature flags written to UserDefaults to flow into pipeline
+        UserDefaults.standard.set(preset.enableContrastiveVariantTraining, forKey: "contrastiveVariantTrainingEnabled")
+        UserDefaults.standard.set(preset.enableOCRVariantAssist, forKey: "ocrAssistedVariantComparison")
+        UserDefaults.standard.set(preset.enableMultiScaleDetection, forKey: "multiScaleDetectionEnabled")
+        UserDefaults.standard.set(preset.enableAuditTrayMode, forKey: "auditTrayModeEnabled")
+        lastUsedPresetId = preset.id
+    }
+
+    private func applyCustomPreset(_ preset: AuditPreset) {
+        withAnimation(.spring(response: 0.3)) {
+            selectedCustomPreset = preset
+            selectedBuiltInPresetId = nil
+        }
+        captureQualityMode = preset.captureQualityMode
+        recognitionScope = preset.recognitionScope
+        strictBrandFilter = preset.strictBrandFilter
+        allowPossibleStragglers = preset.allowPossibleStragglers
+        reviewLater = preset.reviewWorkflow == .reviewLater
+        if !preset.mainBrand.isEmpty { mainBrand = preset.mainBrand }
+        if !preset.secondaryBrand.isEmpty { secondaryBrand = preset.secondaryBrand; enableSecondaryBrand = true }
+        UserDefaults.standard.set(preset.enableContrastiveVariantTraining, forKey: "contrastiveVariantTrainingEnabled")
+        UserDefaults.standard.set(preset.enableOCRVariantAssist, forKey: "ocrAssistedVariantComparison")
+        UserDefaults.standard.set(preset.enableMultiScaleDetection, forKey: "multiScaleDetectionEnabled")
+        UserDefaults.standard.set(preset.enableAuditTrayMode, forKey: "auditTrayModeEnabled")
+        preset.lastUsedAt = Date()
+    }
+
+    /// Smart suggestion: if a shelf layout is selected → Brand Shelf Audit; if tray mode previously enabled → Tray Count
+    private var smartSuggestedPreset: BuiltInPreset? {
+        if selectedLayout != nil {
+            return BuiltInPreset.all.first { $0.id == "brand_shelf_audit" }
+        }
+        if UserDefaults.standard.bool(forKey: "auditTrayModeEnabled") {
+            return BuiltInPreset.all.first { $0.id == "tray_count_high_accuracy" }
+        }
+        return nil
     }
 
     // MARK: - Sections
@@ -156,6 +456,63 @@ struct NewAuditSetupView: View {
             }
         } header: {
             Text("Location")
+        }
+    }
+
+    private var recognitionScopeSection: some View {
+        Section {
+            Picker("Recognition Scope", selection: $recognitionScope) {
+                ForEach(RecognitionScope.allCases, id: \.self) { scope in
+                    Label(scope.displayName, systemImage: scope.icon).tag(scope)
+                }
+            }
+            .pickerStyle(.menu)
+
+            if recognitionScope == .brandLimited {
+                let distinctBrands = Array(Set(allSKUs.map { $0.brand }.filter { !$0.isEmpty })).sorted()
+
+                Picker("Main Brand", selection: $mainBrand) {
+                    Text("Select… ").tag("")
+                    ForEach(distinctBrands, id: \.self) { brand in
+                        Text(brand).tag(brand)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Toggle("Enable Secondary Brand", isOn: $enableSecondaryBrand)
+
+                if enableSecondaryBrand {
+                    Picker("Secondary Brand", selection: $secondaryBrand) {
+                        Text("Select… ").tag("")
+                        ForEach(distinctBrands.filter { $0 != mainBrand }, id: \.self) { brand in
+                            Text(brand).tag(brand)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                Toggle("Strict Brand Filter", isOn: $strictBrandFilter)
+
+                if !strictBrandFilter {
+                    Toggle("Allow Possible Stragglers", isOn: $allowPossibleStragglers)
+                }
+            }
+        } header: {
+            Text("Recognition Scope")
+        } footer: {
+            switch recognitionScope {
+            case .all:
+                Text("Searches the full product catalog during recognition.")
+                    .font(.caption2)
+            case .categoryLimited:
+                Text("Restricts recognition to the selected product category.")
+                    .font(.caption2)
+            case .brandLimited:
+                Text(strictBrandFilter
+                    ? "Only products from the selected brand(s) will be considered."
+                    : "Selected brands are strongly preferred. Stragglers may appear if confidence is very high.")
+                .font(.caption2)
+            }
         }
     }
 
@@ -549,7 +906,14 @@ struct NewAuditSetupView: View {
             reviewWorkflow: selectedWorkflow,
             captureQualityMode: captureQualityMode,
             selectedLayoutId: selectedLayout?.id,
-            selectedLayoutName: selectedLayout?.name ?? ""
+            selectedLayoutName: selectedLayout?.name ?? "",
+            recognitionScope: recognitionScope,
+            mainBrand: mainBrand,
+            secondaryBrand: enableSecondaryBrand ? secondaryBrand : "",
+            strictBrandFilter: strictBrandFilter,
+            allowPossibleStragglers: allowPossibleStragglers,
+            presetName: selectedBuiltInPresetId.flatMap { id in BuiltInPreset.all.first { $0.id == id }?.name } ?? selectedCustomPreset?.name ?? "",
+            presetIdRaw: selectedBuiltInPresetId ?? selectedCustomPreset?.id.uuidString ?? ""
         ) else { return }
 
         if let draft = expectedDraft {

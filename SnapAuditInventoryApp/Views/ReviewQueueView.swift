@@ -311,6 +311,83 @@ struct ReviewQueueView: View {
                 }
             }
 
+            if !evidence.contrastiveExplanation.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Contrastive Variant")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        Text(evidence.contrastiveExplanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.07), in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(.orange.opacity(0.2), lineWidth: 1)
+                }
+            }
+
+            HStack(spacing: 8) {
+                let sourceLabel = evidence.isClusterSplit ? "Cluster Split" :
+                    (evidence.scaleLevel >= 0.95 ? "Full Scan" :
+                    (evidence.scaleLevel >= 0.70 ? "Medium Scale" : "Fine Scale"))
+                let sourceColor: Color = evidence.isClusterSplit ? .red :
+                    (evidence.scaleLevel >= 0.95 ? .blue :
+                    (evidence.scaleLevel >= 0.70 ? .orange : .purple))
+                let sourceIcon = evidence.isClusterSplit ? "rectangle.split.3x3" :
+                    (evidence.scaleLevel >= 0.95 ? "viewfinder" :
+                    (evidence.scaleLevel >= 0.70 ? "viewfinder.rectangular" : "rectangle.and.text.magnifyingglass"))
+
+                Image(systemName: sourceIcon)
+                    .font(.caption2)
+                    .foregroundStyle(sourceColor)
+                Text(sourceLabel)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(sourceColor)
+                Text("·")
+                    .foregroundStyle(.secondary)
+                Text("\(String(format: "%.0f", evidence.scaleLevel * 100))% scale")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color(.systemGray6).opacity(0.5), in: Capsule())
+
+            if evidence.flagReasons.contains(.outsideSelectedBrand) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "building.2.slash.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.teal)
+                        Text("Possible Straggler")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.teal)
+                    }
+                    Text("This item may not belong to the selected brand scope. Detected outside selected brand with strong confidence — possible mis-shelved or stray item.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.teal.opacity(0.08), in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(.teal.opacity(0.25), lineWidth: 1)
+                }
+            }
+
+
             VStack(spacing: 6) {
                 ForEach(Array(evidence.top3Candidates.enumerated()), id: \.offset) { rank, candidate in
                     Button {

@@ -35,6 +35,7 @@ nonisolated enum FlagReason: String, Codable, CaseIterable, Sendable {
     case overage = "OVERAGE"
     case largeVariance = "LARGE_VARIANCE"
     case lookAlikeGroup = "LOOK_ALIKE_GROUP"
+    case outsideSelectedBrand = "OUTSIDE_SELECTED_BRAND"
 
     var label: String {
         switch self {
@@ -49,6 +50,7 @@ nonisolated enum FlagReason: String, Codable, CaseIterable, Sendable {
         case .overage: "Overage"
         case .largeVariance: "Large Variance"
         case .lookAlikeGroup: "Look-Alike"
+        case .outsideSelectedBrand: "Possible Straggler"
         }
     }
 
@@ -65,6 +67,7 @@ nonisolated enum FlagReason: String, Codable, CaseIterable, Sendable {
         case .overage: "arrow.up.circle.fill"
         case .largeVariance: "chart.line.uptrend.xyaxis"
         case .lookAlikeGroup: "square.on.square.dashed"
+        case .outsideSelectedBrand: "building.2.slash.fill"
         }
     }
 
@@ -81,13 +84,14 @@ nonisolated enum FlagReason: String, Codable, CaseIterable, Sendable {
         case .overage: .orange
         case .largeVariance: .purple
         case .lookAlikeGroup: .cyan
+        case .outsideSelectedBrand: .teal
         }
     }
 
     var isMismatch: Bool {
         switch self {
         case .expectedZeroButFound, .shortage, .overage, .largeVariance: true
-        case .lookAlikeGroup: false
+        case .lookAlikeGroup, .outsideSelectedBrand: false
         default: false
         }
     }

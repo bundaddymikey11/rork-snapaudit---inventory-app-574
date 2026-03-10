@@ -6,6 +6,7 @@ enum LineItemFilter: String, CaseIterable {
     case mismatchExpected = "vs Expected"
     case mismatchOnHand = "vs On Hand"
     case lowConfidence = "Low Confidence"
+    case outsideSelectedBrand = "Stragglers"
 }
 
 struct ResultsSummaryView: View {
@@ -22,6 +23,7 @@ struct ResultsSummaryView: View {
     @State private var exportURL: URL?
     @State private var showExportOptions = false
     @State private var showCopiedBanner = false
+    @State private var ttsService = TTSService.shared
     private var csvCache: String { CSVExportService.shared.exportSession(session) }
 
     private var filteredItems: [AuditLineItem] {
@@ -32,6 +34,7 @@ struct ResultsSummaryView: View {
         case .mismatchExpected: return items.filter { mismatchesExpected($0) }
         case .mismatchOnHand: return items.filter { mismatchesOnHand($0) }
         case .lowConfidence: return items.filter { $0.countConfidence < 0.60 && $0.countConfidence > 0 }
+        case .outsideSelectedBrand: return items.filter { $0.flagReasons.contains(.outsideSelectedBrand) }
         }
     }
 
@@ -47,6 +50,7 @@ struct ResultsSummaryView: View {
         case .mismatchExpected: return items.filter { mismatchesExpected($0) }.count
         case .mismatchOnHand: return items.filter { mismatchesOnHand($0) }.count
         case .lowConfidence: return items.filter { $0.countConfidence < 0.60 && $0.countConfidence > 0 }.count
+        case .outsideSelectedBrand: return items.filter { $0.flagReasons.contains(.outsideSelectedBrand) }.count
         }
     }
 
@@ -95,10 +99,24 @@ struct ResultsSummaryView: View {
         .navigationBarBackButtonHidden()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    showExportOptions = true
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
+                HStack(spacing: 12) {
+                    Button {
+                        showExportOptions = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+
+                    Button {
+                        if ttsService.isSpeaking {
+                            ttsService.stopSpeaking()
+                        } else {
+                            let items = filteredItems.map { (name: $0.skuNameSnapshot, count: $0.visionCount) }
+                            ttsService.speakAllResults(items: items)
+                        }
+                    } label: {
+                        Image(systemName: ttsService.isSpeaking ? "stop.circle.fill" : "speaker.wave.2.fill")
+                            .foregroundStyle(ttsService.isSpeaking ? .red : .blue)
+                    }
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -178,6 +196,33 @@ struct ResultsSummaryView: View {
                         .font(.caption2.weight(.semibold))
                 }
                 .foregroundStyle(session.captureQualityMode == .highAccuracy ? .mint : .secondary)
+
+                let assessment = session.captureQualityAssessment
+                if assessment.score > 0 {
+                    let badge = assessment.qualityBadge
+                    let badgeColor: Color = badge == .excellent ? .green : (badge == .good ? .yellow : .orange)
+                    HStack(spacing: 4) {
+                        Image(systemName: badge.icon)
+                            .font(.caption2)
+                        Text(badge.rawValue)
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(badgeColor)
+                }
+
+                if session.recognitionScope == .brandLimited, !session.mainBrand.isEmpty {
+                    let brands = session.secondaryBrand.isEmpty
+                        ? session.mainBrand
+                        : "\(session.mainBrand) + \(session.secondaryBrand)"
+                    HStack(spacing: 4) {
+                        Image(systemName: "building.2.fill")
+                            .font(.caption2)
+                        Text("Brand: \(brands)")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(.purple)
+                }
+
                 Text(session.locationName)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
@@ -311,6 +356,10 @@ struct ResultsSummaryView: View {
             LazyVStack(spacing: 8) {
                 ForEach(filteredItems) { item in
                     LineItemRow(item: item, showReconciliation: session.hasExpectedData || session.hasOnHandData)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            TTSService.shared.speakLineItem(name: item.skuNameSnapshot, count: item.visionCount)
+                        }
                 }
             }
             .padding(.horizontal, 16)

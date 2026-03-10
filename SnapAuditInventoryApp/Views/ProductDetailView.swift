@@ -114,6 +114,23 @@ struct ProductDetailView: View {
                             .foregroundStyle(.blue)
                     }
                 }
+
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("Contrastive Training Active")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.08), in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(.orange.opacity(0.15), lineWidth: 1)
+                }
+
                 Button(role: .destructive) {
                     lookAlikeVM.removeFromAnyGroup(skuId: product.id)
                 } label: {

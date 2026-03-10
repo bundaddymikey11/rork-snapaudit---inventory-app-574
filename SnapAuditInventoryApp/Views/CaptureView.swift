@@ -2,6 +2,19 @@ import SwiftUI
 import SwiftData
 import AVFoundation
 
+enum CaptureInputMode: String, CaseIterable {
+    case photo = "Photo"
+    case video = "Video"
+    case barcode = "Barcode"
+
+    var icon: String {
+        switch self {
+        case .photo: "camera.fill"
+        case .video: "video.fill"
+        case .barcode: "barcode.viewfinder"
+        }
+    }
+}
 struct CaptureView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -11,7 +24,7 @@ struct CaptureView: View {
     let onCaptureComplete: () -> Void
 
     @State private var captureService = CaptureService()
-    @State private var showFinishAlert = false
+    @State private var showSessionControlSheet = false
     @State private var permissionDenied = false
     @State private var selectedImages: [UIImage] = []
     @State private var showLibraryPicker = false
@@ -32,6 +45,7 @@ struct CaptureView: View {
     @State private var previewImage: UIImage? = nil
     @State private var showImagePreview: Bool = false
     @State private var captureQualityAssessment: CaptureQualityAssessment = .empty
+    @State private var captureInputMode: CaptureInputMode = .photo
 
     @Query private var allSKUs: [ProductSKU]
     @Query private var allGroups: [LookAlikeGroup]
@@ -89,12 +103,21 @@ struct CaptureView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if useLibraryMode {
+            if captureInputMode == .barcode && !useLibraryMode {
+                VStack(spacing: 0) {
+                    BarcodeScannerView(
+                        session: session,
+                        auditViewModel: auditViewModel
+                    )
+                    inputModeSwitcher
+                }
+            } else if useLibraryMode {
                 libraryModeView
             } else {
                 VStack(spacing: 0) {
                     cameraPreview
                     captureControls
+                    inputModeSwitcher
                 }
             }
         }
@@ -102,8 +125,8 @@ struct CaptureView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button { showFinishAlert = true } label: {
-                    Image(systemName: "xmark")
+                Button { showSessionControlSheet = true } label: {
+                    Image(systemName: "ellipsis.circle")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(8)
@@ -121,12 +144,28 @@ struct CaptureView: View {
                 }
             }
         }
-        .alert("Discard Session?", isPresented: $showFinishAlert) {
-            Button("Discard", role: .destructive) {
+        .confirmationDialog("Audit Session", isPresented: $showSessionControlSheet, titleVisibility: .visible) {
+            if hasMedia {
+                Button("✅ Complete Audit") { finishCapture() }
+            }
+            Button("⏸ Pause Audit") {
+                auditViewModel.setup(context: modelContext)
+                auditViewModel.pauseSession(session)
                 if !useLibraryMode { captureService.tearDown() }
                 dismiss()
             }
-            Button("Keep Editing", role: .cancel) { }
+            Button("⛔ Stop & Discard", role: .destructive) {
+                auditViewModel.setup(context: modelContext)
+                auditViewModel.stopAndDiscardSession(session)
+                if !useLibraryMode { captureService.tearDown() }
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text(hasMedia
+                ? "Choose how to handle this audit session."
+                : "No media captured yet."
+            )
         }
         .alert("Camera Access Required", isPresented: $permissionDenied) {
             Button("Open Settings") {
@@ -660,6 +699,39 @@ struct CaptureView: View {
         .background(.black.opacity(0.85))
     }
 
+    private var inputModeSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach(CaptureInputMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        captureInputMode = mode
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: mode.icon)
+                            .font(.caption2.weight(.semibold))
+                        Text(mode.rawValue)
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(captureInputMode == mode ? .white : .gray)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        captureInputMode == mode
+                            ? (mode == .barcode ? Color.cyan : Color.blue)
+                            : Color.clear,
+                        in: Capsule()
+                    )
+                }
+            }
+        }
+        .padding(4)
+        .background(Color(.systemGray6).opacity(0.15), in: Capsule())
+        .padding(.horizontal, 40)
+        .padding(.vertical, 10)
+        .background(.black)
+    }
+
     private var photoControls: some View {
         VStack(spacing: 12) {
             if canTakeMore {
@@ -885,7 +957,7 @@ struct CaptureView: View {
                     Image(systemName: warning.icon)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.yellow)
-                    Text(warning.title)
+                    Text(warning.actionPrompt)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white)
                     Spacer()
@@ -936,12 +1008,22 @@ struct CaptureView: View {
     }
 
     private var captureScoreChip: some View {
-        Text("\(Int(captureQualityAssessment.score * 100))%")
-            .font(.caption2.weight(.semibold).monospacedDigit())
-            .foregroundStyle(.mint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.mint.opacity(0.16), in: Capsule())
+        let badge = captureQualityAssessment.qualityBadge
+        let scoreText = "\(Int(captureQualityAssessment.score * 100))%"
+        let badgeColor: Color = badge == .excellent ? .green : (badge == .good ? .yellow : .orange)
+        return HStack(spacing: 5) {
+            if badge != .unrated {
+                Image(systemName: badge.icon)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(badgeColor)
+            }
+            Text(badge != .unrated ? badge.rawValue : scoreText)
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(badge != .unrated ? badgeColor : .mint)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background((badge != .unrated ? badgeColor : Color.mint).opacity(0.16), in: Capsule())
     }
 
     private func updateCaptureQualityAssessment() {

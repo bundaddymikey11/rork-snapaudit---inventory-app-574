@@ -32,6 +32,10 @@ struct SessionDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 sessionHeader
 
+                if session.status == .paused {
+                    resumeBanner
+                }
+
                 if !session.lineItems.isEmpty {
                     tabPicker
                 }
@@ -414,8 +418,38 @@ struct SessionDetailView: View {
     private var statusColor: Color {
         switch session.status {
         case .draft: .gray
-        case .processing: .orange
+        case .paused: .orange
+        case .processing: .blue
         case .complete: .green
+        }
+    }
+
+    private var resumeBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "pause.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Audit Paused")
+                    .font(.subheadline.weight(.semibold))
+                if let pausedAt = session.pausedAt {
+                    Text("Paused \(pausedAt.formatted(.relative(presentation: .named)))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Resume capture to continue adding media.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(.rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(.orange.opacity(0.3), lineWidth: 1)
         }
     }
 

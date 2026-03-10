@@ -30,6 +30,10 @@ struct SnapAuditInventoryAppApp: App {
             ShelfLayout.self,
             ShelfZone.self,
             LayoutAssignmentHistory.self,
+            VariantComparisonProfile.self,
+            VariantReferencePair.self,
+            VariantEvidenceScore.self,
+            AuditPreset.self,
         ])
 
         var resolvedContainer: ModelContainer?

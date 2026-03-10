@@ -29,7 +29,9 @@ class CatalogViewModel {
 
     var categories: [String] {
         let unique = Set(products.map(\.category)).filter { !$0.isEmpty }
-        return ["All"] + unique.sorted()
+        let predefined = InventoryCategory.auditCategories.map(\.rawValue)
+        let combined = Set(predefined + Array(unique))
+        return ["All"] + combined.sorted()
     }
 
     var filteredProducts: [ProductSKU] {

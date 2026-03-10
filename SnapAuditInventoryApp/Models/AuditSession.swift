@@ -33,12 +33,14 @@ nonisolated enum CaptureMode: String, Codable, CaseIterable, Sendable {
 
 nonisolated enum AuditStatus: String, Codable, CaseIterable, Sendable {
     case draft
+    case paused
     case processing
     case complete
 
     var displayName: String {
         switch self {
         case .draft: "Draft"
+        case .paused: "Paused"
         case .processing: "Processing"
         case .complete: "Complete"
         }
@@ -47,6 +49,7 @@ nonisolated enum AuditStatus: String, Codable, CaseIterable, Sendable {
     var icon: String {
         switch self {
         case .draft: "doc"
+        case .paused: "pause.circle.fill"
         case .processing: "arrow.triangle.2.circlepath"
         case .complete: "checkmark.circle.fill"
         }
@@ -55,7 +58,8 @@ nonisolated enum AuditStatus: String, Codable, CaseIterable, Sendable {
     var color: String {
         switch self {
         case .draft: "gray"
-        case .processing: "orange"
+        case .paused: "orange"
+        case .processing: "blue"
         case .complete: "green"
         }
     }
@@ -157,6 +161,15 @@ nonisolated enum CaptureQualityWarning: String, Codable, CaseIterable, Sendable,
         }
     }
 
+    var actionPrompt: String {
+        switch self {
+        case .clutterOutsideMainArea: "Use a cleaner background"
+        case .lowContrast: "Try a higher contrast surface"
+        case .strongGlare: "Reduce glare on packaging"
+        case .productsOutsideCaptureZone: "Move products inside the guide frame"
+        }
+    }
+
     var icon: String {
         switch self {
         case .clutterOutsideMainArea: "square.stack.3d.up.trianglebadge.exclamationmark"
@@ -194,12 +207,75 @@ extension AuditSession {
 nonisolated extension CaptureQualityAssessment {
     var summaryText: String {
         guard let firstWarning = warnings.first else { return "Capture conditions look good" }
-        return firstWarning.title
+        return firstWarning.actionPrompt
+    }
+
+    var qualityBadge: CaptureQualityBadge {
+        switch score {
+        case 0.75...: return .excellent
+        case 0.45...: return .good
+        default: return score > 0 ? .needsImprovement : .unrated
+        }
+    }
+}
+
+nonisolated enum CaptureQualityBadge: String, Sendable {
+    case excellent = "Excellent Capture"
+    case good = "Good Capture"
+    case needsImprovement = "Needs Improvement"
+    case unrated = ""
+
+    var color: String {
+        switch self {
+        case .excellent: "green"
+        case .good: "yellow"
+        case .needsImprovement: "orange"
+        case .unrated: "gray"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .excellent: "checkmark.seal.fill"
+        case .good: "checkmark.circle.fill"
+        case .needsImprovement: "exclamationmark.triangle.fill"
+        case .unrated: "questionmark.circle"
+        }
     }
 }
 
 nonisolated extension CaptureQualityMode {
     var defaultAssessmentJSON: String { "{}" }
+}
+
+nonisolated enum RecognitionScope: String, Codable, CaseIterable, Sendable {
+    case all
+    case categoryLimited
+    case brandLimited
+
+    var displayName: String {
+        switch self {
+        case .all: "All Inventory"
+        case .categoryLimited: "Category Limited"
+        case .brandLimited: "Brand Limited"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .all: "Recognize from all products in your catalog"
+        case .categoryLimited: "Restrict recognition to a specific product category"
+        case .brandLimited: "Restrict recognition to selected brands only"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .all: "square.grid.3x3.fill"
+        case .categoryLimited: "tag.fill"
+        case .brandLimited: "building.2.fill"
+        }
+    }
 }
 
 @Model
@@ -218,6 +294,18 @@ class AuditSession {
     var captureQualityMetadataJSON: String
     var selectedLayoutId: UUID?
     var selectedLayoutName: String
+    var recognitionScopeRaw: String
+    var mainBrand: String
+    var secondaryBrand: String
+    var strictBrandFilter: Bool
+    var allowPossibleStragglers: Bool
+    var pausedAt: Date?
+    var presetName: String
+    var presetIdRaw: String
+
+    var recognitionScope: RecognitionScope {
+        RecognitionScope(rawValue: recognitionScopeRaw) ?? .all
+    }
 
     @Relationship(deleteRule: .cascade) var capturedMedia: [CapturedMedia] = []
     @Relationship(deleteRule: .cascade) var lineItems: [AuditLineItem] = []
@@ -235,7 +323,14 @@ class AuditSession {
         captureQualityMode: CaptureQualityMode = .standard,
         captureQualityMetadataJSON: String = "{}",
         selectedLayoutId: UUID? = nil,
-        selectedLayoutName: String = ""
+        selectedLayoutName: String = "",
+        recognitionScope: RecognitionScope = .all,
+        mainBrand: String = "",
+        secondaryBrand: String = "",
+        strictBrandFilter: Bool = true,
+        allowPossibleStragglers: Bool = false,
+        presetName: String = "",
+        presetIdRaw: String = ""
     ) {
         self.id = UUID()
         self.createdAt = Date()
@@ -251,6 +346,13 @@ class AuditSession {
         self.captureQualityMetadataJSON = captureQualityMetadataJSON
         self.selectedLayoutId = selectedLayoutId
         self.selectedLayoutName = selectedLayoutName
+        self.recognitionScopeRaw = recognitionScope.rawValue
+        self.mainBrand = mainBrand
+        self.secondaryBrand = secondaryBrand
+        self.strictBrandFilter = strictBrandFilter
+        self.allowPossibleStragglers = allowPossibleStragglers
+        self.presetName = presetName
+        self.presetIdRaw = presetIdRaw
     }
 
     var pendingLineItemCount: Int {

@@ -43,6 +43,8 @@ nonisolated struct RawDetection: Sendable {
     var metadataJSON: String = ""
     var bestHotspotCropPath: String = ""
     var shelfZoneName: String = ""
+    var contrastiveExplanation: String = ""
+    var contrastiveBoost: Double = 0
 }
 
 @Observable
@@ -76,7 +78,14 @@ class AuditViewModel {
         reviewWorkflow: ReviewWorkflow = .reviewLater,
         captureQualityMode: CaptureQualityMode = .standard,
         selectedLayoutId: UUID? = nil,
-        selectedLayoutName: String = ""
+        selectedLayoutName: String = "",
+        recognitionScope: RecognitionScope = .all,
+        mainBrand: String = "",
+        secondaryBrand: String = "",
+        strictBrandFilter: Bool = true,
+        allowPossibleStragglers: Bool = false,
+        presetName: String = "",
+        presetIdRaw: String = ""
     ) -> AuditSession? {
         guard let modelContext else { return nil }
         let session = AuditSession(
@@ -88,7 +97,14 @@ class AuditViewModel {
             reviewWorkflow: reviewWorkflow,
             captureQualityMode: captureQualityMode,
             selectedLayoutId: selectedLayoutId,
-            selectedLayoutName: selectedLayoutName
+            selectedLayoutName: selectedLayoutName,
+            recognitionScope: recognitionScope,
+            mainBrand: mainBrand,
+            secondaryBrand: secondaryBrand,
+            strictBrandFilter: strictBrandFilter,
+            allowPossibleStragglers: allowPossibleStragglers,
+            presetName: presetName,
+            presetIdRaw: presetIdRaw
         )
         modelContext.insert(session)
         try? modelContext.save()
@@ -217,6 +233,9 @@ class AuditViewModel {
         )
         processingProgress = 0.25
 
+        // Brand scope: pre-compute brand SKU sets
+        let brandScopeInfo = buildBrandScopeInfo(for: session, modelContext: modelContext)
+
         // Phase 4: Region proposal + classification
         let closeMargin = UserDefaults.standard.double(forKey: "closeMatchMargin").nonZeroOrDefault(0.10)
         let autoAcceptThreshold = UserDefaults.standard.double(forKey: "autoAcceptConfidence").nonZeroOrDefault(0.85)
@@ -239,7 +258,13 @@ class AuditViewModel {
             for region in regions {
                 let matchedZone = layoutZoneInfo.findZone(for: region.bbox)
                 let zoneCandidateIds: [UUID]? = matchedZone.flatMap { layoutZoneInfo.skuIds(for: $0) }
-                let effectiveCandidateIds = zoneCandidateIds ?? skuIds
+                var effectiveCandidateIds = zoneCandidateIds ?? skuIds
+
+                // Brand-limited strict filter: narrow candidates to selected brands (preserve zone override)
+                if session.recognitionScope == .brandLimited && session.strictBrandFilter && !brandScopeInfo.brandSkuIds.isEmpty {
+                    let filtered = effectiveCandidateIds.filter { brandScopeInfo.brandSkuIds.contains($0) }
+                    if !filtered.isEmpty { effectiveCandidateIds = filtered }
+                }
                 let shelfZoneName = matchedZone?.name ?? ""
                 let embeddingResult: (vector: Data, quality: QualityMetrics)?
                 if !embeddingRecords.isEmpty && !effectiveCandidateIds.isEmpty {
@@ -272,6 +297,8 @@ class AuditViewModel {
                 var reviewStatus: ReviewStatus = .pending
                 var metadataJSON = ""
                 var bestHotspotCropImage: UIImage?
+                var contrastiveExplanation = ""
+                var contrastiveBoostValue: Double = 0
 
                 if !embeddingRecords.isEmpty && !effectiveCandidateIds.isEmpty {
                     let customHotspots = effectiveCandidateIds.compactMap { skuZonesMap[$0] }.first
@@ -306,10 +333,25 @@ class AuditViewModel {
 
                         var priorBoosted = rawCandidates.map { candidate -> RecognitionCandidate in
                             let factor = Float(priorFactors[candidate.skuId] ?? 1.0)
+                            var score = min(1.0, candidate.score * factor)
+
+                            // Brand scope boost / penalty (non-strict path only; strict already filtered candidates)
+                            if session.recognitionScope == .brandLimited && !session.strictBrandFilter {
+                                let isInBrand = brandScopeInfo.brandSkuIds.contains(candidate.skuId)
+                                if isInBrand {
+                                    score = min(1.0, score + 0.18)
+                                } else if session.allowPossibleStragglers {
+                                    // Allow outside-brand only if raw confidence is very high
+                                    if Float(candidate.score) < 0.78 { score = max(0, score - 0.25) }
+                                } else {
+                                    score = 0  // suppress when stragglers not allowed
+                                }
+                            }
+
                             return RecognitionCandidate(
                                 id: candidate.id,
                                 skuId: candidate.skuId,
-                                score: min(1.0, candidate.score * factor),
+                                score: Float(score),
                                 nearestReferenceURL: candidate.nearestReferenceURL
                             )
                         }.sorted { $0.score > $1.score }
@@ -403,7 +445,7 @@ class AuditViewModel {
 
                         if let best = boosted.first, best.score > 0.20 {
                             let second = boosted.dropFirst().first
-                            let margin = Double(best.score - (second?.score ?? 0))
+                            var margin = Double(best.score - (second?.score ?? 0))
 
                             // Skip saturated high-confidence SKUs
                             if saturatedSkuIds.contains(best.skuId) && Double(best.score) >= 0.75 {
@@ -417,6 +459,53 @@ class AuditViewModel {
                             chosenSkuId = best.skuId
                             chosenSkuName = skuNameMap[best.skuId] ?? "Unknown"
                             finalScore = Double(best.score) * quality.qualityScore * visibilityFactor
+
+                            // Contrastive Variant Training pass
+                            let contrastiveEnabled = UserDefaults.standard.object(forKey: "contrastiveVariantTrainingEnabled") as? Bool ?? true
+                            if contrastiveEnabled,
+                               let secondCandidate = second,
+                               ContrastiveTrainingService.shared.shouldTriggerContrastive(
+                                   top3: Array(boosted.prefix(3)),
+                                   lookAlikeInfo: lookAlikeInfo,
+                                   margin: effectiveCloseMargin
+                               ) {
+                                let groupId = lookAlikeInfo.skuToGroup[best.skuId]!
+                                let ocrAssisted = UserDefaults.standard.object(forKey: "ocrAssistedVariantComparison") as? Bool ?? true
+
+                                // Load differentiator zones from VariantComparisonProfile or ZoneProfile
+                                var differentiatorZones: [ZoneRect] = []
+                                if let groupZones = lookAlikeInfo.groupZones[groupId], !groupZones.isEmpty {
+                                    differentiatorZones = groupZones
+                                }
+
+                                let contrastiveResult = await ContrastiveTrainingService.shared.performContrastiveComparison(
+                                    cropImage: region.cropImage,
+                                    candidate1SkuId: best.skuId,
+                                    candidate1Score: best.score,
+                                    candidate2SkuId: secondCandidate.skuId,
+                                    candidate2Score: secondCandidate.score,
+                                    groupId: groupId,
+                                    differentiatorZones: differentiatorZones,
+                                    skuKeywords: skuKeywords,
+                                    embeddings: allEmbeddings,
+                                    verifiedSamples: [],
+                                    ocrAssistedEnabled: ocrAssisted
+                                )
+
+                                contrastiveExplanation = contrastiveResult.explanation
+                                contrastiveBoostValue = contrastiveResult.netAdjustment
+
+                                // Apply contrastive adjustment
+                                if contrastiveResult.winnerSkuId != best.skuId {
+                                    // Swap to the contrastive winner
+                                    chosenSkuId = contrastiveResult.winnerSkuId
+                                    chosenSkuName = skuNameMap[contrastiveResult.winnerSkuId] ?? "Unknown"
+                                    finalScore = Double(secondCandidate.score) * quality.qualityScore * visibilityFactor + contrastiveResult.netAdjustment
+                                    margin = abs(contrastiveResult.netAdjustment)
+                                } else {
+                                    finalScore += contrastiveResult.netAdjustment
+                                }
+                            }
 
                             if Double(best.score) >= autoAcceptThreshold && margin >= effectiveCloseMargin {
                                 reviewStatus = .confirmed
@@ -450,6 +539,16 @@ class AuditViewModel {
                     reviewStatus = .pending
                 }
 
+                // Brand-limited: flag straggler items detected outside selected brands
+                if session.recognitionScope == .brandLimited,
+                   let resolvedId = chosenSkuId,
+                   !brandScopeInfo.brandSkuIds.isEmpty,
+                   !brandScopeInfo.brandSkuIds.contains(resolvedId) {
+                    reasons.appendIfNotContains(.outsideSelectedBrand)
+                    reviewStatus = .pending  // Always needs review
+                    isSoftAssigned = true
+                }
+
                 var detection = RawDetection(
                     sourceId: source.id,
                     bbox: region.bbox,
@@ -465,6 +564,8 @@ class AuditViewModel {
                     queryEmbeddingData: queryEmbeddingData
                 )
                 detection.metadataJSON = metadataJSON
+                detection.contrastiveExplanation = contrastiveExplanation
+                detection.contrastiveBoost = contrastiveBoostValue
                 if let bestHotspotCropImage,
                    let bestHotspotData = bestHotspotCropImage.jpegData(compressionQuality: 0.75),
                    let hotspotPath = try? MediaStorageService.shared.saveCrop(
@@ -649,12 +750,51 @@ class AuditViewModel {
         fetchSessions()
     }
 
+    /// Pause the capture phase — keeps all captured media, marks session as paused.
+    /// The user can resume from the session list.
+    func pauseSession(_ session: AuditSession) {
+        guard let modelContext else { return }
+        session.status = .paused
+        session.pausedAt = Date()
+        try? modelContext.save()
+        fetchSessions()
+    }
+
+    /// Stop and discard — deletes the session and all associated media files.
+    func stopAndDiscardSession(_ session: AuditSession) {
+        guard let modelContext else { return }
+        MediaStorageService.shared.deleteSessionFiles(sessionId: session.id)
+        modelContext.delete(session)
+        try? modelContext.save()
+        fetchSessions()
+    }
+
     func mediaCount(for session: AuditSession) -> Int { session.capturedMedia.count }
     func frameCount(for session: AuditSession) -> Int {
         session.capturedMedia.reduce(0) { $0 + $1.sampledFrames.count }
     }
 
+
     // MARK: - Private Helpers
+
+    private struct BrandScopeInfo {
+        let brandSkuIds: Set<UUID>
+        let brandsSet: Set<String>
+    }
+
+    private func buildBrandScopeInfo(for session: AuditSession, modelContext: ModelContext) -> BrandScopeInfo {
+        guard session.recognitionScope == .brandLimited, !session.mainBrand.isEmpty else {
+            return BrandScopeInfo(brandSkuIds: [], brandsSet: [])
+        }
+        var brands = Set<String>([session.mainBrand])
+        let secondary = session.secondaryBrand.trimmingCharacters(in: .whitespaces)
+        if !secondary.isEmpty { brands.insert(secondary) }
+
+        let descriptor = FetchDescriptor<ProductSKU>()
+        let allSKUs = (try? modelContext.fetch(descriptor)) ?? []
+        let ids = Set(allSKUs.filter { brands.contains($0.brand) }.map { $0.id })
+        return BrandScopeInfo(brandSkuIds: ids, brandsSet: brands)
+    }
 
     private func recomputeLineItem(_ lineItem: AuditLineItem?, modelContext: ModelContext) {
         guard let lineItem else { return }
@@ -1024,6 +1164,10 @@ class AuditViewModel {
                     evidence.metadataJSON = det.metadataJSON
                 }
                 evidence.lineItem = lineItem
+                evidence.contrastiveExplanation = det.contrastiveExplanation
+                evidence.contrastiveBoost = det.contrastiveBoost
+                evidence.scaleLevel = det.scaleLevel
+                evidence.isClusterSplit = det.isClusterSplit
                 modelContext.insert(evidence)
             }
 

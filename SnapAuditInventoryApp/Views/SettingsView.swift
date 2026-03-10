@@ -20,6 +20,15 @@ struct SettingsView: View {
     @AppStorage("defaultCaptureQualityMode") private var defaultCaptureQualityModeRaw: String = CaptureQualityMode.standard.rawValue
     @AppStorage("showAuditFramingGuide") private var showAuditFramingGuide: Bool = true
     @AppStorage("showPreCaptureWarnings") private var showPreCaptureWarnings: Bool = true
+    @AppStorage("contrastiveVariantTrainingEnabled") private var contrastiveVariantTrainingEnabled: Bool = true
+    @AppStorage("ocrAssistedVariantComparison") private var ocrAssistedVariantComparison: Bool = true
+    @AppStorage("adaptiveFocusZoneWeighting") private var adaptiveFocusZoneWeighting: Bool = true
+    @AppStorage("ttsReadbackEnabled") private var ttsReadbackEnabled: Bool = true
+    @AppStorage("ttsSpeechRate") private var ttsSpeechRate: Double = 0.48
+    @AppStorage("barcodeAutoSpeak") private var barcodeAutoSpeak: Bool = true
+    @AppStorage("defaultRecognitionScope") private var defaultRecognitionScopeRaw: String = RecognitionScope.all.rawValue
+    @AppStorage("defaultStrictBrandFilter") private var defaultStrictBrandFilter: Bool = true
+    @AppStorage("defaultAllowPossibleStragglers") private var defaultAllowPossibleStragglers: Bool = false
     @State private var showDemoAlert = false
     @State private var showClearAlert = false
     @State private var pendingDemoState = false
@@ -119,6 +128,48 @@ struct SettingsView: View {
                 Text("Capture Quality")
             } footer: {
                 Text("High Accuracy mode guides users toward plain matte backgrounds, cleaner spacing, and stronger framing before detection begins.")
+                    .font(.caption2)
+            }
+
+            Section {
+                Picker("Default Scope", selection: $defaultRecognitionScopeRaw) {
+                    ForEach(RecognitionScope.allCases, id: \.self) { scope in
+                        Label(scope.displayName, systemImage: scope.icon).tag(scope.rawValue)
+                    }
+                }
+
+                Toggle(isOn: $defaultStrictBrandFilter) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Default: Strict Brand Filter")
+                            Text("Candidates outside selected brands are fully excluded")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "building.2.fill")
+                            .foregroundStyle(.purple)
+                    }
+                }
+
+                Toggle(isOn: $defaultAllowPossibleStragglers) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Default: Allow Possible Stragglers")
+                            Text("Outside-brand items may surface if confidence is very high")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "building.2.slash.fill")
+                            .foregroundStyle(.teal)
+                    }
+                }
+                .disabled(defaultStrictBrandFilter)
+            } header: {
+                Text("Recognition Scope")
+            } footer: {
+                Text("Controls the default brand-limiting behavior for new audits. Override per-session in New Audit Setup.")
                     .font(.caption2)
             }
 
@@ -268,10 +319,108 @@ struct SettingsView: View {
                 }
                 .disabled(!smartFocusZonesEnabled)
                 .opacity(smartFocusZonesEnabled ? 1 : 0.4)
+
+                Toggle(isOn: $contrastiveVariantTrainingEnabled) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Contrastive Variant Training")
+                            Text("Compare similar variants within Look-Alike Groups to reduce false positives")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "arrow.triangle.branch")
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                Toggle(isOn: $ocrAssistedVariantComparison) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("OCR Assisted Variant Comparison")
+                            Text("Use OCR text matching during contrastive comparison")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .disabled(!contrastiveVariantTrainingEnabled)
+                .opacity(contrastiveVariantTrainingEnabled ? 1 : 0.4)
+
+                Toggle(isOn: $adaptiveFocusZoneWeighting) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Adaptive Focus Zone Weighting")
+                            Text("Auto-adjust zone weights based on confirmed matches")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "slider.horizontal.below.square.and.square.filled")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .disabled(!contrastiveVariantTrainingEnabled)
+                .opacity(contrastiveVariantTrainingEnabled ? 1 : 0.4)
             } header: {
                 Text("Smart Recognition")
             } footer: {
-                Text("Custom focus zones from Look-Alike Groups take priority. Otherwise the app uses built-in hotspot presets like top band, bottom band, side strips, and badge areas.")
+                Text("Custom focus zones from Look-Alike Groups take priority. Contrastive Variant Training adds an additional comparison pass for near-identical packaging variants.")
+                    .font(.caption2)
+            }
+
+            Section {
+                Toggle(isOn: $ttsReadbackEnabled) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("TTS Readback")
+                            Text("Read product names and counts aloud")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .foregroundStyle(.blue)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Speech Rate", systemImage: "gauge.with.needle")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(speechRateLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $ttsSpeechRate, in: 0.30...0.60, step: 0.02)
+                        .tint(.blue)
+                }
+                .disabled(!ttsReadbackEnabled)
+                .opacity(ttsReadbackEnabled ? 1 : 0.4)
+
+                Toggle(isOn: $barcodeAutoSpeak) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Barcode Auto-Speak")
+                            Text("Announce product name when barcode is scanned")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "barcode.viewfinder")
+                            .foregroundStyle(.cyan)
+                    }
+                }
+                .disabled(!ttsReadbackEnabled)
+                .opacity(ttsReadbackEnabled ? 1 : 0.4)
+            } header: {
+                Text("Audio & Accessibility")
+            } footer: {
+                Text("Double-tap any line item in results to hear it read aloud. Use the speaker button to read all items.")
                     .font(.caption2)
             }
 
@@ -473,5 +622,14 @@ struct PrivacyView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var speechRateLabel: String {
+        switch ttsSpeechRate {
+        case ..<0.36: "Slow"
+        case 0.36..<0.46: "Normal"
+        case 0.46..<0.54: "Medium"
+        default: "Fast"
+        }
     }
 }

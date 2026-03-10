@@ -59,6 +59,17 @@ struct AuditHistoryView: View {
                 } label: {
                     sessionRow(session)
                 }
+                .buttonStyle(.plain)
+                .swipeActions(edge: .leading) {
+                    if session.status == .paused {
+                        Button {
+                            navigationPath.append(AppRoute.sessionDetail(session))
+                        } label: {
+                            Label("Resume", systemImage: "play.circle.fill")
+                        }
+                        .tint(.orange)
+                    }
+                }
                 .swipeActions(edge: .trailing) {
                     if isAdmin {
                         Button(role: .destructive) {
@@ -92,6 +103,10 @@ struct AuditHistoryView: View {
                     Label(session.mode.displayName, systemImage: session.mode.icon)
                     Text("·")
                     Label(session.captureQualityMode.badgeTitle, systemImage: session.captureQualityMode.icon)
+                    if !session.presetName.isEmpty {
+                        Text("·")
+                        Label(session.presetName, systemImage: "wand.and.stars")
+                    }
                     Text("·")
                     Text("\(session.capturedMedia.count) media")
                     if !session.lineItems.isEmpty {
@@ -134,6 +149,19 @@ struct AuditHistoryView: View {
                     .background(.orange.opacity(0.1), in: Capsule())
                 }
 
+                if session.status == .paused {
+                    HStack(spacing: 3) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 9))
+                        Text("Tap to Resume")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(.orange.opacity(0.12), in: Capsule())
+                }
+
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -145,7 +173,8 @@ struct AuditHistoryView: View {
     private func statusColor(_ status: AuditStatus) -> Color {
         switch status {
         case .draft: .gray
-        case .processing: .orange
+        case .paused: .orange
+        case .processing: .blue
         case .complete: .green
         }
     }

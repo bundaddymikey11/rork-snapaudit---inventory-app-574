@@ -77,6 +77,10 @@ class DetectionEvidence {
     var reviewStatus: ReviewStatus
     var isSoftAssigned: Bool
     var metadataJSON: String
+    var contrastiveExplanation: String
+    var contrastiveBoost: Double
+    var scaleLevel: Double
+    var isClusterSplit: Bool
     var createdAt: Date
 
     init(
@@ -107,6 +111,10 @@ class DetectionEvidence {
         self.reviewStatus = reviewStatus
         self.isSoftAssigned = isSoftAssigned
         self.metadataJSON = ""
+        self.contrastiveExplanation = ""
+        self.contrastiveBoost = 0
+        self.scaleLevel = 1.0
+        self.isClusterSplit = false
         self.createdAt = Date()
     }
 
