@@ -40,7 +40,13 @@ struct NewAuditSetupView: View {
     @State private var enableSecondaryBrand: Bool = false
     @State private var strictBrandFilter: Bool = true
     @State private var allowPossibleStragglers: Bool = false
+    @State private var mainCategory: String = ""
+    @State private var mainSubcategory: String = ""
 
+    // Derived subcategory options for the category-limited picker
+    private var availableSubcategories: [String] {
+        InventoryCategory.subcategories(for: mainCategory)
+    }
     @State private var showExpectedImporter = false
     @State private var showOnHandImporter = false
     @State private var showExpectedMapper = false
@@ -307,10 +313,36 @@ struct NewAuditSetupView: View {
                 .padding(.vertical, 4)
             }
             .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+
+            // Inline brand pickers — shown immediately when brand-limited scope is active
+            if recognitionScope == .brandLimited {
+                let distinctBrands = BrandCatalog.merged(with: allSKUs.map { $0.brand }.filter { !$0.isEmpty })
+
+                brandPickerRow(
+                    label: "Brand",
+                    brands: distinctBrands,
+                    selection: $mainBrand
+                )
+
+                Toggle("Add Second Brand", isOn: $enableSecondaryBrand)
+
+                if enableSecondaryBrand {
+                    brandPickerRow(
+                        label: "Second Brand",
+                        brands: distinctBrands.filter { $0 != mainBrand },
+                        selection: $secondaryBrand
+                    )
+                }
+            }
+
         } header: {
             Text("Audit Workflow")
         } footer: {
-            if let id = selectedBuiltInPresetId,
+            if recognitionScope == .brandLimited && mainBrand.isEmpty {
+                Label("Select a brand to narrow recognition.", systemImage: "building.2.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            } else if let id = selectedBuiltInPresetId,
                let preset = BuiltInPreset.all.first(where: { $0.id == id }) {
                 Label(preset.description, systemImage: preset.icon)
                     .font(.caption2)
@@ -322,6 +354,60 @@ struct NewAuditSetupView: View {
             } else {
                 Text("Select a preset to auto-configure settings, or configure manually below.")
                     .font(.caption2)
+            }
+        }
+    }
+
+    /// Combined brand selector: existing catalog brands as a Picker + a TextField to enter a brand not yet in the catalog.
+    @ViewBuilder
+    private func brandPickerRow(label: String, brands: [String], selection: Binding<String>) -> some View {
+        let isCustomEntry = !selection.wrappedValue.isEmpty && !brands.contains(selection.wrappedValue)
+
+        Picker(label, selection: selection) {
+            Text("Select brand…").tag("")
+            ForEach(brands, id: \.self) { brand in
+                Text(brand).tag(brand)
+            }
+            Divider()
+            Text("Enter new brand…").tag("__new__")
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selection.wrappedValue) { _, newVal in
+            if newVal == "__new__" {
+                selection.wrappedValue = ""   // clear so the TextField takes over
+            }
+        }
+
+        // Show a text field when the user picks "Enter new brand…" or has typed a custom name
+        if selection.wrappedValue == "" && isCustomEntry || selection.wrappedValue == "__new__" || isCustomEntry {
+            HStack(spacing: 8) {
+                Image(systemName: "building.2")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                TextField("New brand name", text: selection)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.words)
+                if !selection.wrappedValue.isEmpty {
+                    Button {
+                        selection.wrappedValue = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        } else if selection.wrappedValue.isEmpty {
+            // Always show the free-text field when nothing is selected yet (no catalog brands exist)
+            if brands.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "building.2")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                    TextField("Brand name", text: selection)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.words)
+                }
             }
         }
     }
@@ -469,7 +555,7 @@ struct NewAuditSetupView: View {
             .pickerStyle(.menu)
 
             if recognitionScope == .brandLimited {
-                let distinctBrands = Array(Set(allSKUs.map { $0.brand }.filter { !$0.isEmpty })).sorted()
+                let distinctBrands = BrandCatalog.merged(with: allSKUs.map { $0.brand }.filter { !$0.isEmpty })
 
                 Picker("Main Brand", selection: $mainBrand) {
                     Text("Select… ").tag("")
@@ -497,6 +583,26 @@ struct NewAuditSetupView: View {
                     Toggle("Allow Possible Stragglers", isOn: $allowPossibleStragglers)
                 }
             }
+            if recognitionScope == .categoryLimited {
+                Picker("Main Category", selection: $mainCategory) {
+                    Text("Select…").tag("")
+                    ForEach(InventoryCategory.allCases, id: \.self) { cat in
+                        Text(cat.displayName).tag(cat.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: mainCategory) { _, _ in mainSubcategory = "" }
+
+                if !mainCategory.isEmpty && !availableSubcategories.isEmpty {
+                    Picker("Subcategory", selection: $mainSubcategory) {
+                        Text("Any").tag("")
+                        ForEach(availableSubcategories, id: \.self) { sub in
+                            Text(sub).tag(sub)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
         } header: {
             Text("Recognition Scope")
         } footer: {
@@ -505,8 +611,14 @@ struct NewAuditSetupView: View {
                 Text("Searches the full product catalog during recognition.")
                     .font(.caption2)
             case .categoryLimited:
-                Text("Restricts recognition to the selected product category.")
-                    .font(.caption2)
+                if mainCategory.isEmpty {
+                    Label("Select a category to narrow recognition.", systemImage: "tag.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Searches \(mainCategory)\(mainSubcategory.isEmpty ? "" : " → \(mainSubcategory)") only.")
+                        .font(.caption2)
+                }
             case .brandLimited:
                 Text(strictBrandFilter
                     ? "Only products from the selected brand(s) will be considered."
@@ -912,6 +1024,8 @@ struct NewAuditSetupView: View {
             secondaryBrand: enableSecondaryBrand ? secondaryBrand : "",
             strictBrandFilter: strictBrandFilter,
             allowPossibleStragglers: allowPossibleStragglers,
+            mainCategory: mainCategory,
+            mainSubcategory: mainSubcategory,
             presetName: selectedBuiltInPresetId.flatMap { id in BuiltInPreset.all.first { $0.id == id }?.name } ?? selectedCustomPreset?.name ?? "",
             presetIdRaw: selectedBuiltInPresetId ?? selectedCustomPreset?.id.uuidString ?? ""
         ) else { return }

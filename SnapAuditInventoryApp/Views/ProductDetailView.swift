@@ -16,9 +16,17 @@ struct ProductDetailView: View {
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text(product.name)
+                        Text(product.productName)
                             .font(.title2.bold())
                         Spacer()
+                        if !product.isActive {
+                            Text("Inactive")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.secondary, in: Capsule())
+                        }
                     }
                     if !product.variant.isEmpty {
                         Text(product.variant)
@@ -33,7 +41,13 @@ struct ProductDetailView: View {
             Section("Details") {
                 DetailRow(label: "SKU", value: product.sku, icon: "number")
                 DetailRow(label: "Brand", value: product.brand.isEmpty ? "—" : product.brand, icon: "tag")
-                DetailRow(label: "Category", value: product.category.isEmpty ? "—" : product.category, icon: "square.grid.2x2")
+                DetailRow(label: "Category", value: product.parentCategory.isEmpty ? "—" : product.parentCategory, icon: "square.grid.2x2")
+                if !product.subcategory.isEmpty {
+                    DetailRow(label: "Subcategory", value: product.subcategory, icon: "chevron.right.square")
+                }
+                if let sw = product.sizeOrWeight, !sw.isEmpty {
+                    DetailRow(label: "Size / Weight", value: sw, icon: "scalemass")
+                }
                 if let barcode = product.barcode, !barcode.isEmpty {
                     DetailRow(label: "Barcode", value: barcode, icon: "barcode")
                 }

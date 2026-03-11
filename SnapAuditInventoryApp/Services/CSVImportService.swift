@@ -27,6 +27,15 @@ nonisolated struct ParsedSKUInfo: Sendable {
     let id: UUID
     let sku: String
     let name: String
+    /// Pre-normalized name for fast case-insensitive matching during import.
+    let normalizedName: String
+
+    init(id: UUID, sku: String, name: String) {
+        self.id = id
+        self.sku = sku
+        self.name = name
+        self.normalizedName = name.normalized
+    }
 }
 
 nonisolated final class CSVImportService: Sendable {
@@ -77,16 +86,20 @@ nonisolated final class CSVImportService: Sendable {
     }
 
     func findSKU(for key: String, in skus: [ParsedSKUInfo]) -> ParsedSKUInfo? {
-        let lower = key.lowercased().trimmingCharacters(in: .whitespaces)
-        if let exact = skus.first(where: { $0.sku.lowercased() == lower }) { return exact }
-        if let exact = skus.first(where: { $0.name.lowercased() == lower }) { return exact }
+        let normalizedKey = key.normalized
+        // 1. Exact SKU match (case-insensitive)
+        if let exact = skus.first(where: { $0.sku.normalized == normalizedKey }) { return exact }
+        // 2. Exact product name match (normalized)
+        if let exact = skus.first(where: { $0.normalizedName == normalizedKey }) { return exact }
+        // 3. Partial SKU match
         if let partial = skus.first(where: {
-            let s = $0.sku.lowercased()
-            return s.contains(lower) || lower.contains(s)
+            let s = $0.sku.normalized
+            return s.contains(normalizedKey) || normalizedKey.contains(s)
         }) { return partial }
+        // 4. Partial product name match
         if let partial = skus.first(where: {
-            let n = $0.name.lowercased()
-            return n.contains(lower) || lower.contains(n)
+            let n = $0.normalizedName
+            return n.contains(normalizedKey) || normalizedKey.contains(n)
         }) { return partial }
         return nil
     }

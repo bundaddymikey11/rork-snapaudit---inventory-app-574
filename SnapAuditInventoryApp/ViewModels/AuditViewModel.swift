@@ -84,6 +84,8 @@ class AuditViewModel {
         secondaryBrand: String = "",
         strictBrandFilter: Bool = true,
         allowPossibleStragglers: Bool = false,
+        mainCategory: String = "",
+        mainSubcategory: String = "",
         presetName: String = "",
         presetIdRaw: String = ""
     ) -> AuditSession? {
@@ -103,6 +105,8 @@ class AuditViewModel {
             secondaryBrand: secondaryBrand,
             strictBrandFilter: strictBrandFilter,
             allowPossibleStragglers: allowPossibleStragglers,
+            mainCategory: mainCategory,
+            mainSubcategory: mainSubcategory,
             presetName: presetName,
             presetIdRaw: presetIdRaw
         )
@@ -790,10 +794,30 @@ class AuditViewModel {
         let secondary = session.secondaryBrand.trimmingCharacters(in: .whitespaces)
         if !secondary.isEmpty { brands.insert(secondary) }
 
+        // Use normalized brand comparison for reliability across casing differences
+        let normalizedBrands = brands.map { $0.normalized }
         let descriptor = FetchDescriptor<ProductSKU>()
         let allSKUs = (try? modelContext.fetch(descriptor)) ?? []
-        let ids = Set(allSKUs.filter { brands.contains($0.brand) }.map { $0.id })
+        let ids = Set(allSKUs.filter { normalizedBrands.contains($0.normalizedBrand) }.map { $0.id })
         return BrandScopeInfo(brandSkuIds: ids, brandsSet: brands)
+    }
+
+    /// Builds a SKUCatalogFilter from the session's recognition scope settings.
+    private static func buildCatalogFilter(for session: AuditSession) -> SKUCatalogFilter {
+        switch session.recognitionScope {
+        case .categoryLimited:
+            let mainCategory = session.mainCategory.trimmingCharacters(in: .whitespaces)
+            let subCategory = session.mainSubcategory.trimmingCharacters(in: .whitespaces)
+            guard !mainCategory.isEmpty else { return SKUCatalogFilter() }
+            return SKUCatalogFilter(
+                parentCategory: mainCategory,
+                subcategory: subCategory.isEmpty ? nil : subCategory,
+                activeOnly: true
+            )
+        case .brandLimited, .all:
+            // Brand filtering handled separately in buildBrandScopeInfo
+            return SKUCatalogFilter(activeOnly: true)
+        }
     }
 
     private func recomputeLineItem(_ lineItem: AuditLineItem?, modelContext: ModelContext) {
@@ -924,7 +948,12 @@ class AuditViewModel {
 
         let descriptor = FetchDescriptor<ProductSKU>()
         let all = (try? modelContext.fetch(descriptor)) ?? []
-        return (all.map(\.id), expectedQtyMap, onHandQtyMap)
+
+        // Narrow candidates using SKUCatalogFilter when category/brand scope is set
+        let filter = Self.buildCatalogFilter(for: session)
+        let filtered = filter.candidateIds(from: all)
+        let candidateIds = filtered.isEmpty ? all.map(\.id) : filtered
+        return (candidateIds, expectedQtyMap, onHandQtyMap)
     }
 
     private func buildPriorFactors(expectedQtyMap: [UUID: Int], skuIds: [UUID]) -> [UUID: Double] {

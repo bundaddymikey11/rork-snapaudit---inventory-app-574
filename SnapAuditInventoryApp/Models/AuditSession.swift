@@ -299,6 +299,10 @@ class AuditSession {
     var secondaryBrand: String
     var strictBrandFilter: Bool
     var allowPossibleStragglers: Bool
+    /// Parent category for category-limited recognition scope
+    var mainCategory: String
+    /// Optional subcategory for category-limited recognition scope
+    var mainSubcategory: String
     var pausedAt: Date?
     var presetName: String
     var presetIdRaw: String
@@ -329,6 +333,8 @@ class AuditSession {
         secondaryBrand: String = "",
         strictBrandFilter: Bool = true,
         allowPossibleStragglers: Bool = false,
+        mainCategory: String = "",
+        mainSubcategory: String = "",
         presetName: String = "",
         presetIdRaw: String = ""
     ) {
@@ -351,6 +357,8 @@ class AuditSession {
         self.secondaryBrand = secondaryBrand
         self.strictBrandFilter = strictBrandFilter
         self.allowPossibleStragglers = allowPossibleStragglers
+        self.mainCategory = mainCategory
+        self.mainSubcategory = mainSubcategory
         self.presetName = presetName
         self.presetIdRaw = presetIdRaw
     }

@@ -95,11 +95,22 @@ struct CatalogListView: View {
                         selection: $viewModel.selectedBrand
                     )
                     FilterChip(
-                        title: "Category: \(viewModel.selectedCategory)",
-                        isActive: viewModel.selectedCategory != "All",
-                        options: viewModel.categories,
-                        selection: $viewModel.selectedCategory
+                        title: "Category: \(viewModel.selectedParentCategory)",
+                        isActive: viewModel.selectedParentCategory != "All",
+                        options: viewModel.parentCategories,
+                        selection: Binding(
+                            get: { viewModel.selectedParentCategory },
+                            set: { viewModel.selectedParentCategory = $0; viewModel.selectedSubcategory = "All" }
+                        )
                     )
+                    if viewModel.selectedParentCategory != "All" && viewModel.subcategories.count > 1 {
+                        FilterChip(
+                            title: "Sub: \(viewModel.selectedSubcategory)",
+                            isActive: viewModel.selectedSubcategory != "All",
+                            options: viewModel.subcategories,
+                            selection: $viewModel.selectedSubcategory
+                        )
+                    }
                 }
             }
             .contentMargins(.horizontal, 0)
@@ -115,8 +126,15 @@ struct ProductRow: View {
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(product.name)
-                    .font(.body.weight(.medium))
+                HStack(spacing: 6) {
+                    Text(product.productName)
+                        .font(.body.weight(.medium))
+                    if !product.isActive {
+                        Image(systemName: "moon.zzz")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 HStack(spacing: 6) {
                     Text(product.sku)
@@ -128,6 +146,22 @@ struct ProductRow: View {
                         Text(product.variant)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !product.parentCategory.isEmpty {
+                    HStack(spacing: 4) {
+                        Text(product.parentCategory)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        if !product.subcategory.isEmpty {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.quaternary)
+                            Text(product.subcategory)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
             }
